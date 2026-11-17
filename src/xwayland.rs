@@ -901,6 +901,7 @@ impl XwmHandler for State {
             shell
                 .visible_output_for_surface(&wl_surface)
                 .into_iter()
+                .chain(shell.spill_outputs_for_surface(&wl_surface))
                 .cloned()
                 .collect::<Vec<_>>()
         } else {

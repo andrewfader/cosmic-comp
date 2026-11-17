@@ -209,6 +209,11 @@ pub fn run(hooks: crate::hooks::Hooks) -> Result<(), Box<dyn Error>> {
 
         refresh(state);
 
+        let spill_changes = state.common.shell.write().refresh_spill();
+        for output in spill_changes {
+            state.backend.schedule_render(&output);
+        }
+
         {
             let shell = state.common.shell.read();
             if shell.animations_going() {

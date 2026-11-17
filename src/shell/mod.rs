@@ -102,6 +102,7 @@ pub mod focus;
 pub mod grabs;
 pub mod layout;
 mod seats;
+mod spill;
 mod workspace;
 pub mod zoom;
 pub use self::element::{CosmicMapped, CosmicMappedRenderElement, CosmicSurface};
@@ -313,6 +314,8 @@ pub struct Shell {
     appearance_conf: AppearanceConfig,
     tiling_exceptions: TilingExceptions,
     pending_focus_overrides: Vec<PendingFocusOverride>,
+    spilled: Vec<spill::Spill>,
+    spill_focus: Option<Output>,
 
     #[cfg(feature = "debug")]
     pub debug_active: bool,
@@ -1769,6 +1772,8 @@ impl Shell {
             zoom_state: None,
             tiling_exceptions,
             pending_focus_overrides: Vec::new(),
+            spilled: Vec::new(),
+            spill_focus: None,
 
             #[cfg(feature = "debug")]
             debug_active: false,

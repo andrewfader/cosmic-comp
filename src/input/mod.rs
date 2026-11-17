@@ -2910,6 +2910,26 @@ impl State {
                             return ControlFlow::Break(Ok(Some(element)));
                         }
                     }
+                    Stage::SpillPopups(layout) => {
+                        if let Some((element, _, _)) = layout.spill_focus_under(
+                            output,
+                            global_pos,
+                            WindowSurfaceType::POPUP,
+                            seat,
+                        ) {
+                            return ControlFlow::Break(Ok(Some(element.into())));
+                        }
+                    }
+                    Stage::Spill { layout, .. } => {
+                        if let Some((element, _, _)) = layout.spill_focus_under(
+                            output,
+                            global_pos,
+                            WindowSurfaceType::TOPLEVEL,
+                            seat,
+                        ) {
+                            return ControlFlow::Break(Ok(Some(element.into())));
+                        }
+                    }
                     Stage::WorkspacePopups { workspace, offset } => {
                         let location = global_pos + offset.as_global().to_f64();
                         let output = workspace.output();
@@ -3074,6 +3094,26 @@ impl State {
                             .map(|(target, point)| (target, point.to_global(output)))
                         {
                             return ControlFlow::Break(Ok(Some(under)));
+                        }
+                    }
+                    Stage::SpillPopups(layout) => {
+                        if let Some((_, target, location)) = layout.spill_focus_under(
+                            output,
+                            global_pos,
+                            WindowSurfaceType::POPUP,
+                            seat,
+                        ) {
+                            return ControlFlow::Break(Ok(Some((target, location))));
+                        }
+                    }
+                    Stage::Spill { layout, .. } => {
+                        if let Some((_, target, location)) = layout.spill_focus_under(
+                            output,
+                            global_pos,
+                            WindowSurfaceType::TOPLEVEL,
+                            seat,
+                        ) {
+                            return ControlFlow::Break(Ok(Some((target, location))));
                         }
                     }
                     Stage::WorkspacePopups { workspace, offset } => {

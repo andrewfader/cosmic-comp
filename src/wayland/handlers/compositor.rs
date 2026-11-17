@@ -276,6 +276,9 @@ impl CompositorHandler for State {
         if let Some(output) = shell.visible_output_for_surface(surface) {
             self.backend.schedule_render(output);
         }
+        for output in shell.spill_outputs_for_surface(surface) {
+            self.backend.schedule_render(output);
+        }
 
         if mapped {
             return;

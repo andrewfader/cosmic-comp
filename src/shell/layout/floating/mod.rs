@@ -1372,6 +1372,74 @@ impl FloatingLayout {
         self.space.elements().rev()
     }
 
+    pub fn output(&self) -> &Output {
+        self.space.outputs().next().unwrap()
+    }
+
+    fn viewport_offset(&self, viewport: &Output) -> Point<i32, Local> {
+        (self.output().geometry().loc - viewport.geometry().loc)
+            .as_logical()
+            .as_local()
+    }
+
+    fn shows_on(&self, elem: &CosmicMapped, viewport: &Output) -> bool {
+        viewport == self.output() || self.spills_onto(elem, viewport)
+    }
+
+    fn spills_onto(&self, elem: &CosmicMapped, viewport: &Output) -> bool {
+        let output = self.output();
+        viewport != output
+            && self
+                .space
+                .element_geometry(elem)
+                .and_then(|geometry| {
+                    geometry
+                        .as_local()
+                        .to_global(output)
+                        .intersection(viewport.geometry())
+                })
+                .is_some_and(|overlap| !overlap.is_empty())
+    }
+
+    pub fn spilling_onto<'a>(
+        &'a self,
+        viewport: &'a Output,
+    ) -> impl Iterator<Item = &'a CosmicMapped> + 'a {
+        self.space
+            .elements()
+            .rev()
+            .filter(move |elem| self.spills_onto(elem, viewport))
+    }
+
+    pub fn spill_focus_under(
+        &self,
+        viewport: &Output,
+        location: Point<f64, Global>,
+        surface_type: WindowSurfaceType,
+        seat: &Seat<State>,
+    ) -> Option<(CosmicMapped, PointerFocusTarget, Point<f64, Global>)> {
+        let output = self.output();
+        let location = location.to_local(output);
+        self.spilling_onto(viewport).find_map(|elem| {
+            let render_location = (self.space.element_location(elem).unwrap()
+                - elem.geometry().loc)
+                .as_local()
+                .to_f64();
+            elem.focus_under(
+                (location - render_location).as_logical(),
+                surface_type | WindowSurfaceType::SUBSURFACE,
+                seat,
+            )
+            .map(|(target, offset)| {
+                (
+                    elem.clone(),
+                    target,
+                    (render_location + offset.as_local()).to_global(output),
+                )
+            })
+        })
+    }
+
     pub fn windows(&self) -> impl Iterator<Item = CosmicSurface> + '_ {
         self.mapped().flat_map(|e| e.windows().map(|(w, _)| w))
     }
@@ -1518,8 +1586,26 @@ impl FloatingLayout {
         CosmicWindowRenderElement<R>: RenderElement<R>,
         CosmicStackRenderElement<R>: RenderElement<R>,
     {
-        let output = self.space.outputs().next().unwrap();
-        let output_scale = output.current_scale().fractional_scale();
+        self.render_popups_on(self.output(), renderer, alpha, scanout_node, push)
+    }
+
+    #[profiling::function]
+    pub fn render_popups_on<R>(
+        &self,
+        viewport: &Output,
+        renderer: &mut R,
+        alpha: f32,
+        scanout_node: Option<DrmNode>,
+        push: &mut dyn FnMut(CosmicMappedRenderElement<R>),
+    ) where
+        R: AsGlowRenderer,
+        R::TextureId: Send + Clone + 'static,
+        CosmicMappedRenderElement<R>: RenderElement<R>,
+        CosmicWindowRenderElement<R>: RenderElement<R>,
+        CosmicStackRenderElement<R>: RenderElement<R>,
+    {
+        let output_scale = viewport.current_scale().fractional_scale();
+        let viewport_offset = self.viewport_offset(viewport);
 
         for elem in self
             .animations
@@ -1527,12 +1613,14 @@ impl FloatingLayout {
             .filter(|(_, anim)| matches!(anim, Animation::Minimize { .. }))
             .map(|(elem, _)| elem)
             .chain(self.space.elements().rev())
+            .filter(|elem| self.shows_on(elem, viewport))
         {
-            let (geometry, alpha) = self
+            let (mut geometry, alpha) = self
                 .animations
                 .get(elem)
                 .map(|anim| (*anim.previous_geometry(), alpha * anim.alpha()))
                 .unwrap_or_else(|| (self.space.element_geometry(elem).unwrap().as_local(), alpha));
+            geometry.loc += viewport_offset;
 
             let render_location = geometry.loc - elem.geometry().loc.as_local();
             elem.push_popup_render_elements(
@@ -1553,6 +1641,38 @@ impl FloatingLayout {
         &self,
         renderer: &mut R,
         focused: Option<&CosmicMapped>,
+        resize_indicator: Option<(ResizeMode, ResizeIndicator)>,
+        indicator_thickness: u8,
+        alpha: f32,
+        theme: &cosmic::theme::CosmicTheme,
+        scanout_node: Option<DrmNode>,
+        push: &mut dyn FnMut(CosmicMappedRenderElement<R>),
+    ) where
+        R: AsGlowRenderer,
+        R::TextureId: Send + Clone + 'static,
+        CosmicMappedRenderElement<R>: RenderElement<R>,
+        CosmicWindowRenderElement<R>: RenderElement<R>,
+        CosmicStackRenderElement<R>: RenderElement<R>,
+    {
+        self.render_on(
+            self.output(),
+            renderer,
+            focused,
+            resize_indicator,
+            indicator_thickness,
+            alpha,
+            theme,
+            scanout_node,
+            push,
+        )
+    }
+
+    #[profiling::function]
+    pub fn render_on<R>(
+        &self,
+        viewport: &Output,
+        renderer: &mut R,
+        focused: Option<&CosmicMapped>,
         mut resize_indicator: Option<(ResizeMode, ResizeIndicator)>,
         indicator_thickness: u8,
         alpha: f32,
@@ -1566,12 +1686,13 @@ impl FloatingLayout {
         CosmicWindowRenderElement<R>: RenderElement<R>,
         CosmicStackRenderElement<R>: RenderElement<R>,
     {
-        let output = self.space.outputs().next().unwrap();
+        let output = viewport;
         let output_geometry = {
-            let layers = layer_map_for_output(output);
+            let layers = layer_map_for_output(self.output());
             layers.non_exclusive_zone()
         };
         let output_scale = output.current_scale().fractional_scale();
+        let viewport_offset = self.viewport_offset(viewport);
         let mut lower_elements = SmallVec::<[_; 4]>::new_const();
 
         for elem in self
@@ -1580,25 +1701,30 @@ impl FloatingLayout {
             .filter(|(_, anim)| matches!(anim, Animation::Minimize { .. }))
             .map(|(elem, _)| elem)
             .chain(self.space.elements().rev())
+            .filter(|elem| self.shows_on(elem, viewport))
         {
-            let (mut geometry, alpha) = self
+            let (local_geometry, alpha) = self
                 .animations
                 .get(elem)
                 .map(|anim| (*anim.previous_geometry(), alpha * anim.alpha()))
                 .unwrap_or_else(|| (self.space.element_geometry(elem).unwrap().as_local(), alpha));
+            let mut geometry = local_geometry;
+            geometry.loc += viewport_offset;
             let render_location = geometry.loc - elem.geometry().loc.as_local();
 
             let maybe_map = if let Some(anim) = self.animations.get(elem) {
-                let original_geo = anim.previous_geometry();
+                let mut original_geo = *anim.previous_geometry();
+                original_geo.loc += viewport_offset;
                 geometry = anim.geometry(
                     output_geometry,
                     self.space
                         .element_geometry(elem)
                         .map(RectExt::as_local)
-                        .unwrap_or(geometry),
+                        .unwrap_or(local_geometry),
                     elem.floating_tiled.lock().unwrap().as_ref(),
                     self.gaps(),
                 );
+                geometry.loc += viewport_offset;
 
                 let buffer_size = elem.geometry().size;
                 let scale = Scale {

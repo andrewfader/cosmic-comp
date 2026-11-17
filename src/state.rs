@@ -1424,6 +1424,13 @@ impl Common {
                 }
             });
 
+            shell.spilling_onto(output).for_each(|mapped| {
+                for (window, _) in mapped.windows() {
+                    let throttle = throttle(&window, window.x11_surface().is_some());
+                    window.send_frame(output, time, throttle, should_send);
+                }
+            });
+
             // other (throttled) windows
             active.minimized_windows.iter().for_each(|m| {
                 for window in m.windows() {

@@ -53,6 +53,33 @@ pub enum Stage<'a> {
         workspace: &'a Workspace,
         offset: Point<i32, Logical>,
     },
+    SpillPopups(&'a FloatingLayout),
+    Spill {
+        layout: &'a FloatingLayout,
+        source: &'a Workspace,
+    },
+}
+
+pub fn spill_sources<'a>(
+    shell: &'a Shell,
+    output: &'a Output,
+) -> impl Iterator<Item = (&'a FloatingLayout, &'a Workspace)> {
+    let seat = shell.seats.last_active();
+    shell
+        .workspaces
+        .sets
+        .iter()
+        .filter(move |(source_output, _)| *source_output != output)
+        .filter_map(|(_, set)| set.workspaces.get(set.active).map(|active| (set, active)))
+        .filter(move |(set, active)| {
+            active.get_fullscreen(seat).is_none() && !workspace_overview_is_open(&set.output)
+        })
+        .flat_map(|(set, active)| {
+            [
+                (&set.sticky_layer, active),
+                (&active.floating_layer, active),
+            ]
+        })
 }
 
 pub fn render_input_order<R: Default + 'static>(
@@ -353,6 +380,17 @@ fn render_input_order_internal<R: 'static>(
         })?;
     }
 
+    let shows_spill = element_filter != ElementFilter::LayerShellOnly
+        && !has_fullscreen
+        && set.workspaces.get(set.active).map(|w| w.handle) == Some(current.0);
+    let focused_output = seat.focused_or_active_output();
+
+    if shows_spill {
+        for (layout, _) in spill_sources(shell, output) {
+            callback(Stage::SpillPopups(layout))?;
+        }
+    }
+
     if !has_focused_fullscreen {
         // bottom layer popups
         for (layer, popup, location) in layer_popups(output, Layer::Bottom, element_filter) {
@@ -416,6 +454,14 @@ fn render_input_order_internal<R: 'static>(
         }
     }
 
+    if shows_spill {
+        for (layout, source) in
+            spill_sources(shell, output).filter(|(_, source)| source.output == focused_output)
+        {
+            callback(Stage::Spill { layout, source })?;
+        }
+    }
+
     // sticky windows
     if element_filter != ElementFilter::LayerShellOnly {
         callback(Stage::Sticky(&set.sticky_layer))?;
@@ -437,6 +483,14 @@ fn render_input_order_internal<R: 'static>(
                 workspace,
                 offset: *offset,
             })?;
+        }
+    }
+
+    if shows_spill {
+        for (layout, source) in
+            spill_sources(shell, output).filter(|(_, source)| source.output != focused_output)
+        {
+            callback(Stage::Spill { layout, source })?;
         }
     }
 

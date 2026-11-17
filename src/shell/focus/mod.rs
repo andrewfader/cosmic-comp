@@ -30,7 +30,7 @@ use std::{borrow::Cow, hash::Hash, mem, sync::Mutex};
 
 use tracing::{debug, trace};
 
-pub use self::order::{Stage, render_input_order};
+pub use self::order::{Stage, render_input_order, spill_sources};
 use self::target::{KeyboardFocusTarget, WindowGroup};
 
 use super::{SeatExt, grabs::SeatMoveGrabState, layout::floating::FloatingLayout};

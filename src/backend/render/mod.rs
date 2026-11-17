@@ -1030,6 +1030,39 @@ where
                     },
                 );
             }
+            Stage::SpillPopups(layout) => {
+                layout.render_popups_on(output, renderer, 1.0, scanout_node, &mut |elem| {
+                    if let Some(elem) = crop_to_output(elem.into()) {
+                        elements.push(elem.into())
+                    }
+                });
+            }
+            Stage::Spill { layout, source } => {
+                let current_focus = (!move_active && source.output == focused_output)
+                    .then_some(last_active_seat)
+                    .map(|seat| source.focus_stack.get(seat));
+
+                layout.render_on(
+                    output,
+                    renderer,
+                    current_focus.as_ref().and_then(|stack| {
+                        stack.last().and_then(|t| match t {
+                            FocusTarget::Window(w) => Some(w),
+                            _ => None,
+                        })
+                    }),
+                    None,
+                    active_hint,
+                    1.0,
+                    theme.cosmic(),
+                    scanout_node,
+                    &mut |elem| {
+                        if let Some(elem) = crop_to_output(elem.into()) {
+                            elements.push(elem.into())
+                        }
+                    },
+                );
+            }
             Stage::WorkspacePopups { workspace, offset } => {
                 workspace.render_popups(
                     renderer,
